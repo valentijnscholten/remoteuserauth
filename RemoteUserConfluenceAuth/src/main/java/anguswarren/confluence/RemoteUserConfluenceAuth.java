@@ -1,12 +1,12 @@
 /**
  * Copyright 2016 Angus Warren
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,20 +16,29 @@
 
 package anguswarren.confluence;
 
-import org.apache.log4j.Category;
 import java.io.InputStream;
-import java.util.Arrays;
-import java.util.Properties;
 import java.security.Principal;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Properties;
+
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import com.atlassian.core.util.ClassLoaderUtils;
+
+import org.apache.log4j.Category;
+
 import com.atlassian.confluence.user.ConfluenceAuthenticator;
+import com.atlassian.core.util.ClassLoaderUtils;
+import com.atlassian.user.User;
+import com.atlassian.user.search.page.Pager;
 
 public class RemoteUserConfluenceAuth extends ConfluenceAuthenticator {
-    private static final Category log = Category.getInstance(RemoteUserConfluenceAuth.class);
-	
-    public Principal getUser(HttpServletRequest request, HttpServletResponse response) {
+
+	private static final long serialVersionUID = 1L;
+	private static final Category log = Category.getInstance(RemoteUserConfluenceAuth.class);
+
+    @Override
+	public Principal getUser(HttpServletRequest request, HttpServletResponse response) {
         Principal user = null;
         try {
             if (request.getSession() != null && request.getSession().getAttribute(ConfluenceAuthenticator.LOGGED_IN_KEY) != null) {
@@ -38,40 +47,68 @@ public class RemoteUserConfluenceAuth extends ConfluenceAuthenticator {
                 String username = user.getName();
                 user = getUser(username);
             } else {
-                Properties p = new Properties();
+            	//TODO cache configuration
+            	Properties p = new Properties();
                 try {
                     InputStream iStream = ClassLoaderUtils.getResourceAsStream("RemoteUserConfluenceAuth.properties", this.getClass());
                     p.load(iStream);
                 } catch (Exception e) {
-                    log.debug("Exception loading propertie. The properties file is optional anyway, so this may not be an issues: " + e, e);
+                    log.debug("Exception loading properties. The properties file is optional anyway, so this may not be an issues: " + e, e);
                 }
 
+                String ipAddress = request.getRemoteAddr();
+                log.debug("remote ip address: " + ipAddress);
                 String trustedhosts = p.getProperty("trustedhosts");
                 if (trustedhosts != null) {
-                    String ipAddress = request.getRemoteAddr();
                     if (Arrays.asList(trustedhosts.split(",")).contains(ipAddress)) {
                         log.debug("IP found in trustedhosts.");
                     } else {
-                        log.debug("IP not found in trustedhosts: " + ipAddress);
-                        return null; 
+                        log.warn("IP not found in trustedhosts: " + ipAddress);
+                        return null;
                     }
                 } else {
-                    log.debug("trustedhosts not configured. If you're using http headers, this may be a security issue.");
+                    log.warn("trustedhosts not configured. If you're using http headers, this may be a security issue.");
                 }
 
                 String remoteuser = null;
                 String header = p.getProperty("header");
                 if (header == null) {
-                    log.debug("Trying REMOTE_USER for SSO");
-                    remoteuser = request.getRemoteUser();
+                    //remoteuser = request.getRemoteUser();
+                	//query header directly, because getRemoteUser() will return null when not using any authentication built into Tomcat
+                	remoteuser = request.getHeader("REMOTE_USER");
+                    log.debug("Trying REMOTE_USER for SSO: " + remoteuser);
                 } else {
-                    log.debug("Trying HTTP header '" + header + "' for SSO");
                     remoteuser = request.getHeader(header);
+                    log.debug("Trying HTTP header '" + header + "' for SSO: " + remoteuser);
+                }
+
+                log.debug("Request headers: ");
+                for (String name: Collections.list(request.getHeaderNames())) {
+                	log.debug(name + "=" + request.getHeader(name));
                 }
 
                 if (remoteuser != null) {
-                    String[] username = remoteuser.split("@");
-                    user = getUser(username[0]);
+//                    String[] username = remoteuser.split("@");
+//                    user = getUser(username[0]);
+
+                	Pager<User> usersByEmail = getUserAccessor().getUsersByEmail(remoteuser).pager();
+                	if (usersByEmail.isEmpty()) {
+                		log.info("email address not found: " + remoteuser + " login failed");
+                		return null;
+                	}
+
+                	int count = 0;
+                	for (User userByEmail: usersByEmail) {
+                		user = userByEmail;
+                		if (count > 0) {
+                    		log.info("email address not unique: " + remoteuser + " login failed");
+                    		return null;
+                		}
+                		count = count + 1;
+                	}
+
+                	//we only get here if there's an exact match, so 1 user found with this email
+
                     log.debug("Logging in with username: " + user);
                     request.getSession().setAttribute(ConfluenceAuthenticator.LOGGED_IN_KEY, user);
                     request.getSession().setAttribute(ConfluenceAuthenticator.LOGGED_OUT_KEY, null);
