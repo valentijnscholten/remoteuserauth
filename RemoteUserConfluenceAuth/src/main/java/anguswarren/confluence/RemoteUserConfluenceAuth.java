@@ -37,6 +37,30 @@ public class RemoteUserConfluenceAuth extends ConfluenceAuthenticator {
 	private static final long serialVersionUID = 1L;
 	private static final Category log = Category.getInstance(RemoteUserConfluenceAuth.class);
 
+	private static Properties props;
+
+	private Properties getProperties() {
+		if (props == null) {
+			props = new Properties();
+			try {
+				InputStream iStream = ClassLoaderUtils.getResourceAsStream("RemoteUserConfluenceAuth.properties", this.getClass());
+				props.load(iStream);
+				log.info("loaded properties file: "+  props);
+			} catch (Exception e) {
+				log.warn("Exception loading properties. The properties file is optional anyway, so this may not be an issues: " + e, e);
+			}
+			if (props == null) {
+
+			}
+			String trustedhosts = props.getProperty("trustedhosts");
+			if (trustedhosts == null) {
+				log.warn("trustedhosts not configured, defaulting to allow only headers from 127.0.0.1.");
+				props.setProperty("trustedhosts", "127.0.0.1");
+			}
+		}
+		return props;
+	}
+
     @Override
 	public Principal getUser(HttpServletRequest request, HttpServletResponse response) {
         Principal user = null;
@@ -47,31 +71,24 @@ public class RemoteUserConfluenceAuth extends ConfluenceAuthenticator {
                 String username = user.getName();
                 user = getUser(username);
             } else {
-            	//TODO cache configuration
-            	Properties p = new Properties();
-                try {
-                    InputStream iStream = ClassLoaderUtils.getResourceAsStream("RemoteUserConfluenceAuth.properties", this.getClass());
-                    p.load(iStream);
-                } catch (Exception e) {
-                    log.debug("Exception loading properties. The properties file is optional anyway, so this may not be an issues: " + e, e);
-                }
-
                 String ipAddress = request.getRemoteAddr();
                 log.debug("remote ip address: " + ipAddress);
-                String trustedhosts = p.getProperty("trustedhosts");
+                String trustedhosts = getProperties().getProperty("trustedhosts");
                 if (trustedhosts != null) {
                     if (Arrays.asList(trustedhosts.split(",")).contains(ipAddress)) {
                         log.debug("IP found in trustedhosts.");
                     } else {
-                        log.warn("IP not found in trustedhosts: " + ipAddress);
+                        log.warn("IP '" + ipAddress + "' not found in trustedhosts: ");
                         return null;
                     }
                 } else {
-                    log.warn("trustedhosts not configured. If you're using http headers, this may be a security issue.");
+                    //should never happen
+                	log.warn("trustedhosts not configured. If you're using http headers, this may be a security issue. Dropping request");
+                	return null;
                 }
 
                 String remoteuser = null;
-                String header = p.getProperty("header");
+                String header = getProperties().getProperty("header");
                 if (header == null) {
                     //remoteuser = request.getRemoteUser();
                 	//query header directly, because getRemoteUser() will return null when not using any authentication built into Tomcat
