@@ -71,6 +71,20 @@ public class RemoteUserConfluenceAuth extends ConfluenceAuthenticator {
                 String username = user.getName();
                 user = getUser(username);
             } else {
+
+            	// Does the user have a "Remember Me" cookie set?
+                final Principal cookieUser = getUserFromCookie(request, response);
+                if (cookieUser != null)
+                {
+                    log.debug(String.format("Login for user %s succeeded via Remember Me cookie", cookieUser.getName()));
+                    user = cookieUser;
+                    //not sure if we need to set session attributes, probably yes
+                    log.debug("Logging in with username from cookie: " + user);
+                    request.getSession().setAttribute(ConfluenceAuthenticator.LOGGED_IN_KEY, user);
+                    request.getSession().setAttribute(ConfluenceAuthenticator.LOGGED_OUT_KEY, null);
+                    return user;
+                }
+
                 String ipAddress = request.getRemoteAddr();
                 log.debug("remote ip address: " + ipAddress);
                 String trustedhosts = getProperties().getProperty("trustedhosts");
